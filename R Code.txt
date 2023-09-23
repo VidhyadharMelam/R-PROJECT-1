@@ -1,0 +1,211 @@
+library(plyr)
+library(lubridate)
+library(sqldf)
+library(reshape2)
+setwd("C:\\Users\\viddi\\Desktop\\New folder\\R CODE VIDHYADHAR")
+data <- read.csv("Web_Baskets_2020.csv",sep=";")
+head(data)
+str(data)
+
+#What kind of products purchased most?
+
+a <- dcast(data, article_cat + article_name ~ "Freq", value.var="quantity",sum)
+head(a[order(-a$Freq),])
+
+#Ans. Product "women shirt" with shirts category has been purchased most (max freq)
+
+
+#What are the most successful category in our online business?
+
+a <- dcast(data, article_cat ~ "Freq", value.var="quantity",sum)
+head(a[order(-a$Freq),])
+
+# Ans. pants category is the most successfull (max freq)
+
+str(data)
+
+
+
+data$d1 <- weekdays(ymd(data$date))
+#data$wkday <- weekdays(data$d1)
+data$m <- month(ymd(data$date),label=TRUE)
+head(data)
+
+###### Please note: 
+unique(data[!complete.cases(data),"date"])
+## There is an invalid date : 2020-04-31; there can't be 31 days in the month of April
+
+b <- dcast(data, d1 ~ "freq", value.var="quantity",sum)
+b[order(-b$freq),]
+
+#Which days of the week do we make most/least transactions?
+#Ans. Thursday most and Monday least transactions.
+
+#How are the different articles and categories performing?
+
+b <- dcast(data, article_cat ~ "freq", value.var="quantity",sum)
+head(b[order(-b$freq),])
+tail(b[order(-b$freq),])
+
+#Ans. pants are mostly sold and tent & accessories are least sold
+
+b <- dcast(data,  article_name ~ "freq", value.var="quantity",sum)
+head(b[order(-b$freq),])
+tail(b[order(-b$freq),])
+
+#Ans. women shirt is most sold and 'zwilling pressure cooker' is least sold.
+head(data)
+
+#1a. Find best selling category
+f <- dcast(data, article_cat + m ~ "freq", value.var="quantity",sum)
+head(f)
+sqldf("select article_cat, max(freq) as Freq
+from f
+group by article_cat 
+order by Freq desc")
+
+#Ans.5 best selling categories: pants, shirts, underpants, bras & nightgown/pajamas
+
+#1b. 
+
+a <- sqldf("select article_cat, max(freq) as Freq
+from f
+group by article_cat 
+order by Freq desc")
+
+b <- a[1:5,1]
+
+df <- data[data$article_cat %in% b,]
+df[!duplicated(df$article_cat),"article_cat"]
+#head(df)
+#data[!duplicated(data$date),"date"]
+#data[!duplicated(data$article_cat),"article_cat"]
+
+p <- dcast(df, date + article_cat+article_name ~ "Freq", value.var="article_name",length)
+head(p)
+
+kane <- sqldf("select date, article_cat, article_name, max(Freq) as Total
+from p
+group by date, article_cat
+")
+head(kane,10)
+
+library(ggplot2)
+
+head(kane)
+kane[!duplicated(kane$date),"date"]
+
+#Please note: to fit all the graphs into a single chart is impossible.
+ggplot(kane, aes(fill=article_name, y=Total, x=article_cat)) + 
+  geom_bar(position="dodge", stat="identity")+facet_wrap(~date)
+
+#Here, I have shown only 2 dates, which is working just fine.
+
+k <- kane[kane$date %in% c("2020-04-01","2020-04-02"),]
+ggplot(k, aes(fill=article_name, y=Total, x=article_cat)) + 
+  geom_bar(position="dodge", stat="identity")+facet_wrap(~date)
+
+#df <- read.csv("Web_Baskets_2020.csv",sep=";")
+#head(df)
+head(data)
+
+#Q2 a.
+brock <- sqldf("select date, sum(quantity) as sum_qty,
+                    avg(quantity) as mean_qty,
+    				   median(quantity) as mdn_qty,
+				   count(quantity) as count_qty
+from data
+group by date
+")
+head(brock)
+
+#Q2.b. 
+
+#Here we are measuring the total quantity sold, average, median, and number
+# of quantity sold per day. 
+
+#Q2.c. 
+
+hist(brock$sum_qty, col="red")
+#It's positively skewd distribution, where we can see few extreme high values
+
+hist(brock$mean_qty, col="yellow")
+#It's almost a normal distribution, but slightly negetively skewed.
+
+hist(brock$count_qty, col="blue")
+#It's positively skewd distribution, where we can see few extreme high values
+
+#Q2.d. 
+
+brock$date <- NULL
+brock$mdn_qty <- NULL
+
+#Here we are normalizing the data so that variables with high value
+# doesn't have high impact on the clustering. 
+br <- scale(brock)
+br
+
+#Q3. 
+library(factoextra)
+library(cluster)
+library(fpc)
+library(NbClust)
+library(clValid)
+library(magrittr)
+library(clustertend)
+
+#Hopkins test shows that the data is not suitable for clutering
+#We will apply clustering, nonetheless.
+res <- get_clust_tendency(br, n = nrow(br)-1, graph = FALSE)
+res$hopkins_stat
+
+##Method I: using silhouette method
+nb <- NbClust(br,  distance = "euclidean", min.nc=2, max.nc=15, 
+              method = "kmeans",index = "silhouette")
+
+nb$All.index## maximum value of silhouette shows best number of clusters
+nb$Best.nc
+
+#Sillhoutte suggests to go for 15 clusters, which doesn't seem to be right
+
+#Method III : Scree plot to determine the number of clusters
+wss <- (nrow(br)-1)*sum(apply(br,2,var))
+for (i in 2:15) {
+  wss[i] <- sum(kmeans(br,centers=i)$withinss)
+} 
+plot(1:15, wss, type="b", xlab="Number of Clusters",ylab="Within groups sum of squares")
+#Scree plot suggests to go for 3 or 4 clusters
+
+
+##Best Method IV: using all 30 ways of measure
+nb <- NbClust(br,  distance = "euclidean", min.nc=2, max.nc=15, 
+              method = "kmeans",index = "all")
+#Majority method says to go for 3 clusters, which seems correct
+# We will go with 3 clusters
+
+
+# K-means clustering
+# nstart means it initiates multiple initial configuaration and reports the best one
+
+#3 clusters are looking good
+km.res <- eclust(br, "kmeans", k = 3, nstart = 25, graph = FALSE)
+# Visualize k-means clusters
+fviz_cluster(km.res, geom = "point", frame.type = "norm")
+
+#4 clusters doesn't look good
+km.res <- eclust(br, "kmeans", k = 4, nstart = 25, graph = FALSE)
+# Visualize k-means clusters
+fviz_cluster(km.res, geom = "point", frame.type = "norm")
+
+#2 clusters doesn't look good, either
+km.res <- eclust(br, "kmeans", k = 2, nstart = 25, graph = FALSE)
+# Visualize k-means clusters
+fviz_cluster(km.res, geom = "point", frame.type = "norm")
+
+#Conclusions: Here we have tried a k means clustering.
+#cluster 3 looks good since each one of them are having
+#similar data points. With cluster sum of squre also shows a high value. 
+
+
+
+
